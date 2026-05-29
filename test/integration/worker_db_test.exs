@@ -4,7 +4,7 @@ defmodule Hmnt.Integration.WorkerDbTest do
   @moduletag :integration
   @moduletag timeout: 15_000
 
-  alias Hmnt.Test.{Repo, Migrations, CounterProjection}
+  alias Hmnt.Test.{Repo, Migrations, CounterProjection, SourceCounterProjection}
 
   # ---------------------------------------------------------------------------
   # Setup: fresh in-memory table per test
@@ -13,6 +13,10 @@ defmodule Hmnt.Integration.WorkerDbTest do
   setup do
     Migrations.drop_counters_table!()
     Migrations.create_counters_table!()
+    Migrations.drop_source_counters_table!()
+    Migrations.create_source_counters_table!()
+    Migrations.drop_counter_events_table!()
+    Migrations.create_counter_events_table!()
 
     id = System.unique_integer([:positive, :monotonic])
     name = :"db_test_#{id}"
@@ -218,6 +222,76 @@ defmodule Hmnt.Integration.WorkerDbTest do
 
       wait_for_worker_down(name, CounterProjection, 6)
       assert GenServer.whereis(via) == nil
+    end
+  end
+
+  describe "source replay from DB events" do
+    test "appended DB events are replayed when notify arrives with a gap" do
+      source_name = :"source_db_test_#{System.unique_integer([:positive, :monotonic])}"
+
+      {:ok, _} =
+        start_supervised(
+          {Hmnt,
+           [
+             name: source_name,
+             projections: [SourceCounterProjection],
+             repo: Repo,
+             suspend_after: 200
+           ]},
+          id: source_name
+        )
+
+      Migrations.append_counter_event!(100, 1)
+      Migrations.append_counter_event!(100, 2)
+
+      # Trigger replay path: worker starts at 0 and receives idx=2 first.
+      Hmnt.notify(source_name, %{entity_id: 100, index: 2, type: "Increment"})
+
+      record = wait_for_source_count(100, 2)
+      assert record.last_event_index == 2
+    end
+
+    test "appending new DB event and notifying advances projection" do
+      source_name = :"source_db_test_#{System.unique_integer([:positive, :monotonic])}"
+
+      {:ok, _} =
+        start_supervised(
+          {Hmnt,
+           [
+             name: source_name,
+             projections: [SourceCounterProjection],
+             repo: Repo,
+             suspend_after: 200
+           ]},
+          id: source_name
+        )
+
+      Migrations.append_counter_event!(101, 1)
+      Hmnt.notify(source_name, %{entity_id: 101, index: 1, type: "Increment"})
+      wait_for_source_count(101, 1)
+
+      Migrations.append_counter_event!(101, 2)
+      Hmnt.notify(source_name, %{entity_id: 101, index: 2, type: "Increment"})
+
+      record = wait_for_source_count(101, 2)
+      assert record.last_event_index == 2
+    end
+  end
+
+  defp wait_for_source_count(entity_id, expected, retries \\ 40) do
+    record = Repo.get_by(SourceCounterProjection, entity_id: entity_id)
+
+    cond do
+      record && record.count == expected ->
+        record
+
+      retries > 0 ->
+        Process.sleep(50)
+        wait_for_source_count(entity_id, expected, retries - 1)
+
+      true ->
+        actual = record && record.count
+        flunk("Expected source count #{expected} for entity #{entity_id}, got #{inspect(actual)}")
     end
   end
 end

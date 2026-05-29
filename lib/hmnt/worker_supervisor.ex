@@ -29,7 +29,13 @@ defmodule Hmnt.WorkerSupervisor do
 
   @impl true
   def init(args) do
-    {:ok, args}
+    {:ok,
+     %{
+       name: args[:name],
+       repo: args[:repo],
+       suspend_after: args[:suspend_after],
+       seen: []
+     }}
   end
 
   @impl true
@@ -43,17 +49,22 @@ defmodule Hmnt.WorkerSupervisor do
 
   @impl true
   def handle_cast({:cast_event, projection, event}, state) do
-    {id, _idx} = projection.identity(event)
+    if seen?(projection, event, state) do
+      {:noreply, state}
+    else
+      {id, _idx} = projection.identity(event)
 
-    # Ensure the worker is running before casting the event
-    case start_worker(projection, id, state) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, _reason} -> :ok
+      # Ensure the worker is running before casting the event
+      case start_worker(projection, id, state) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, _reason} -> :ok
+      end
+
+      Hmnt.Worker.cast_event(state[:name], projection, event)
+
+      {:noreply, remember(projection, event, state)}
     end
-
-    Hmnt.Worker.cast_event(state[:name], projection, event)
-    {:noreply, state}
   end
 
   def handle_cast({:stop_child, projection, id}, state) do
@@ -76,5 +87,26 @@ defmodule Hmnt.WorkerSupervisor do
     ]
 
     DynamicSupervisor.start_child(Hmnt.Supervisor.ds_name(state[:name]), {Hmnt.Worker, args})
+  end
+
+  defp hash(term), do: :erlang.phash2(term)
+
+  defp seen?(projection, event, state) do
+    hash = hash({projection, event})
+    hash in state[:seen]
+  end
+
+  defp remember(projection, event, state) do
+    hash = hash({projection, event})
+
+    %{state | seen: [hash | state[:seen]]}
+    |> rotation()
+  end
+
+  defp rotation(state, limit \\ 300) do
+    %{
+      state
+      | seen: Enum.take(state[:seen], limit)
+    }
   end
 end
