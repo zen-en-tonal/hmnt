@@ -1,0 +1,38 @@
+defmodule Hmnt.Projection do
+  # TODO: Find a better name for identity/1
+  @callback identity(event :: any()) :: {entity_id :: any(), event_index :: integer()} | nil
+
+  @callback source(entity_id :: any(), last_event_index :: integer(), limit :: integer()) :: [
+              any()
+            ]
+
+  @callback handle_event(event :: any(), state :: any()) :: any()
+
+  @callback initial_state() :: any()
+
+  @optional_callbacks initial_state: 0
+
+  @spec identity(module(), any()) :: {any(), integer()} | nil
+  def identity(projection, event) do
+    projection.identity(event)
+  end
+
+  @spec source(module(), any(), integer(), integer()) :: list(any())
+  def source(projection, entity_id, last_event_index, limit) do
+    projection.source(entity_id, last_event_index, limit)
+  end
+
+  @spec handle_event(module(), any(), any()) :: any()
+  def handle_event(projection, event, state) do
+    projection.handle_event(event, state)
+  end
+
+  @spec initial_state(module()) :: any()
+  def initial_state(projection) do
+    if function_exported?(projection, :initial_state, 0) do
+      projection.initial_state()
+    else
+      struct(projection, [])
+    end
+  end
+end
