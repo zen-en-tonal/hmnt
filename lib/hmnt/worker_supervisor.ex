@@ -1,11 +1,10 @@
 defmodule Hmnt.WorkerSupervisor do
   use GenServer
 
-  # Each tenant gets a GenServer + DynamicSupervisor named via Module.concat so
-  # they are addressable across distributed nodes using `{name, node}`.
+  # Each tenant gets a GenServer that routes events to Workers. Workers are
+  # supervised by a DynamicSupervisor that is a sibling child of Hmnt.Supervisor.
 
   defp gs_name(name), do: Module.concat(__MODULE__, name)
-  defp ds_name(name), do: Module.concat(Hmnt.DynamicWorkerSupervisor, name)
 
   def start_link(args) do
     tenant = Keyword.fetch!(args, :name)
@@ -30,8 +29,6 @@ defmodule Hmnt.WorkerSupervisor do
 
   @impl true
   def init(args) do
-    tenant = args[:name]
-    DynamicSupervisor.start_link(strategy: :one_for_one, name: ds_name(tenant))
     {:ok, args}
   end
 
@@ -46,13 +43,24 @@ defmodule Hmnt.WorkerSupervisor do
 
   @impl true
   def handle_cast({:cast_event, projection, event}, state) do
+    {id, _idx} = projection.identity(event)
+
+    # Ensure the worker is running before casting the event
+    case start_worker(projection, id, state) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, _reason} -> :ok
+    end
+
     Hmnt.Worker.cast_event(state[:name], projection, event)
     {:noreply, state}
   end
 
   def handle_cast({:stop_child, projection, id}, state) do
+    ds = Hmnt.Supervisor.ds_name(state[:name])
+
     if pid = GenServer.whereis(Hmnt.Worker.via(state[:name], projection, id)) do
-      DynamicSupervisor.terminate_child(ds_name(state[:name]), pid)
+      DynamicSupervisor.terminate_child(ds, pid)
     end
 
     {:noreply, state}
@@ -67,6 +75,6 @@ defmodule Hmnt.WorkerSupervisor do
       suspend_after: state[:suspend_after]
     ]
 
-    DynamicSupervisor.start_child(ds_name(state[:name]), {Hmnt.Worker, args})
+    DynamicSupervisor.start_child(Hmnt.Supervisor.ds_name(state[:name]), {Hmnt.Worker, args})
   end
 end

@@ -11,14 +11,27 @@ defmodule HmntTest do
 
     def start_link(_), do: Agent.start_link(fn -> %{} end, name: __MODULE__)
 
-    def get_by(schema, id: id) do
-      Agent.get(__MODULE__, &Map.get(&1, {schema, id}))
+    def get_by(schema, [{key, id}]) do
+      Agent.get(__MODULE__, &Map.get(&1, {schema, key, id}))
+    end
+
+    def get_by(schema, id: id), do: get_by(schema, [{:id, id}])
+
+    def insert_or_update!(%Ecto.Changeset{} = cs) do
+      record = Ecto.Changeset.apply_changes(cs)
+      pk = primary_key(record)
+      Agent.update(__MODULE__, &Map.put(&1, {record.__struct__, :id, pk}, record))
+      record
     end
 
     def insert_or_update!(record) do
-      key = {record.__struct__, record.id}
-      Agent.update(__MODULE__, &Map.put(&1, key, record))
+      pk = primary_key(record)
+      Agent.update(__MODULE__, &Map.put(&1, {record.__struct__, :id, pk}, record))
       record
+    end
+
+    defp primary_key(record) do
+      Map.get(record, :id) || Map.get(record, :entity_id)
     end
 
     def all, do: Agent.get(__MODULE__, &Map.values/1)
