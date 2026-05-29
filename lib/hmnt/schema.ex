@@ -55,6 +55,16 @@ defmodule Hmnt.Schema do
       def initial_state(), do: struct(__MODULE__, [])
 
       defoverridable initial_state: 0
+
+      @before_compile Hmnt.Schema
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(_env) do
+    quote do
+      # Catch-all fallback appended after all user-defined identity/1 clauses
+      def identity(_), do: nil
     end
   end
 

@@ -36,7 +36,6 @@ defmodule HmntTest do
 
     @impl true
     def identity(%{entity_id: id, index: idx}), do: {id, idx}
-    def identity(_), do: nil
 
     @impl true
     def source(_id, _last_idx, _limit), do: []
@@ -82,8 +81,31 @@ defmodule HmntTest do
       assert {42, 7} = CounterProjection.identity(%{entity_id: 42, index: 7})
     end
 
-    test "identity/1 returns nil for non-matching event" do
+    test "identity/1 returns nil for non-matching event (default fallback)" do
       assert nil == CounterProjection.identity(%{unrelated: true})
+    end
+
+    test "identity/1 default fallback can be overridden" do
+      defmodule CustomIdentity do
+        use Hmnt.Schema
+
+        schema "things" do
+          field :value, :integer
+        end
+
+        @impl true
+        def identity(%{value: v, index: i}), do: {v, i}
+
+        @impl true
+        def source(_, _, _), do: []
+
+        @impl true
+        def handle_event(_, state), do: state
+      end
+
+      assert {7, 3} = CustomIdentity.identity(%{value: 7, index: 3})
+      # The default fallback is still invoked for non-matching patterns
+      assert nil == CustomIdentity.identity(%{unrelated: true})
     end
 
     test "handle_event/2 increments count" do
