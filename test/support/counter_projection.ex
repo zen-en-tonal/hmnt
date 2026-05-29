@@ -7,7 +7,7 @@ defmodule Hmnt.Test.CounterProjection do
 
   @primary_key {:entity_id, :integer, autogenerate: false}
   schema "counters" do
-    field :count, :integer, default: 0
+    field(:count, :integer, default: 0)
     timestamps()
   end
 

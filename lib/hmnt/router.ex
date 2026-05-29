@@ -23,11 +23,12 @@ defmodule Hmnt.Router do
 
   @impl true
   def handle_info({:event, event}, state) do
-    Enum.each(state.projections, fn projection ->
-      if {_id, _idx} = Projection.identity(projection, event) do
-        Hmnt.WorkerSupervisor.cast_event(state.name, projection, event)
+    for projection <- state.projections do
+      case Projection.identity(projection, event) do
+        nil -> :noop
+        {_id, _idx} -> Hmnt.WorkerSupervisor.cast_event(state.name, projection, event)
       end
-    end)
+    end
 
     {:noreply, state}
   end

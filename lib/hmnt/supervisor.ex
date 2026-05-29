@@ -29,4 +29,3 @@ defmodule Hmnt.Supervisor do
     [name: args[:name], repo: args[:repo], suspend_after: args[:suspend_after]]
   end
 end
-

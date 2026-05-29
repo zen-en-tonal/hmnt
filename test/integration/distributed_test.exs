@@ -168,7 +168,10 @@ defmodule Hmnt.Integration.DistributedTest do
 
       # Wait for the worker to appear on any node in the cluster
       wait_until(fn ->
-        Enum.any?(all_nodes, &worker_alive_on?(&1, tenant, Hmnt.Test.CounterProjection, entity_id))
+        Enum.any?(
+          all_nodes,
+          &worker_alive_on?(&1, tenant, Hmnt.Test.CounterProjection, entity_id)
+        )
       end)
 
       # Verify the worker landed on the node Sharding currently maps the key to
@@ -226,11 +229,17 @@ defmodule Hmnt.Integration.DistributedTest do
       rpc(node(), Hmnt, :notify, [tenant_b, %{entity_id: entity_id, index: 1, type: "Increment"}])
 
       wait_until(fn ->
-        Enum.any?(all_nodes, &worker_alive_on?(&1, tenant_a, Hmnt.Test.CounterProjection, entity_id))
+        Enum.any?(
+          all_nodes,
+          &worker_alive_on?(&1, tenant_a, Hmnt.Test.CounterProjection, entity_id)
+        )
       end)
 
       wait_until(fn ->
-        Enum.any?(all_nodes, &worker_alive_on?(&1, tenant_b, Hmnt.Test.CounterProjection, entity_id))
+        Enum.any?(
+          all_nodes,
+          &worker_alive_on?(&1, tenant_b, Hmnt.Test.CounterProjection, entity_id)
+        )
       end)
 
       node_a = Hmnt.Sharding.node_for({tenant_a, Hmnt.Test.CounterProjection, entity_id})

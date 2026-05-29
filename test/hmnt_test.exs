@@ -43,8 +43,8 @@ defmodule HmntTest do
     use Hmnt.Schema
 
     schema "counters" do
-      field :entity_id, :integer
-      field :count, :integer, default: 0
+      field(:entity_id, :integer)
+      field(:count, :integer, default: 0)
     end
 
     @impl true
@@ -103,7 +103,7 @@ defmodule HmntTest do
         use Hmnt.Schema
 
         schema "things" do
-          field :value, :integer
+          field(:value, :integer)
         end
 
         @impl true
@@ -134,7 +134,7 @@ defmodule HmntTest do
         use Hmnt.Schema
 
         schema "things" do
-          field :value, :integer, default: 99
+          field(:value, :integer, default: 99)
         end
 
         @impl true
@@ -255,8 +255,17 @@ defmodule HmntTest do
     end
 
     test "start_link/1 starts an isolated supervisor per tenant" do
-      {:ok, pid_a} = start_supervised({Hmnt, name: :mt_tenant_a, projections: [CounterProjection], repo: FakeRepo}, id: :mt_a)
-      {:ok, pid_b} = start_supervised({Hmnt, name: :mt_tenant_b, projections: [CounterProjection], repo: FakeRepo}, id: :mt_b)
+      {:ok, pid_a} =
+        start_supervised(
+          {Hmnt, name: :mt_tenant_a, projections: [CounterProjection], repo: FakeRepo},
+          id: :mt_a
+        )
+
+      {:ok, pid_b} =
+        start_supervised(
+          {Hmnt, name: :mt_tenant_b, projections: [CounterProjection], repo: FakeRepo},
+          id: :mt_b
+        )
 
       assert Process.alive?(pid_a)
       assert Process.alive?(pid_b)
@@ -264,7 +273,10 @@ defmodule HmntTest do
     end
 
     test "notify/2 routes to the correct tenant router" do
-      {:ok, _} = start_supervised({Hmnt, name: :route_test, projections: [CounterProjection], repo: FakeRepo})
+      {:ok, _} =
+        start_supervised(
+          {Hmnt, name: :route_test, projections: [CounterProjection], repo: FakeRepo}
+        )
 
       Hmnt.Notifier.subscribe(:route_test)
       Hmnt.notify(:route_test, %{entity_id: 1, index: 1, type: "Tick"})
@@ -272,8 +284,15 @@ defmodule HmntTest do
     end
 
     test "two tenants do not receive each other's events" do
-      {:ok, _} = start_supervised({Hmnt, name: :cross_a, projections: [CounterProjection], repo: FakeRepo}, id: :cross_a)
-      {:ok, _} = start_supervised({Hmnt, name: :cross_b, projections: [CounterProjection], repo: FakeRepo}, id: :cross_b)
+      {:ok, _} =
+        start_supervised({Hmnt, name: :cross_a, projections: [CounterProjection], repo: FakeRepo},
+          id: :cross_a
+        )
+
+      {:ok, _} =
+        start_supervised({Hmnt, name: :cross_b, projections: [CounterProjection], repo: FakeRepo},
+          id: :cross_b
+        )
 
       Hmnt.Notifier.subscribe(:cross_a)
       Hmnt.notify(:cross_b, %{entity_id: 99, index: 1})

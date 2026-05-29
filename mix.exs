@@ -8,8 +8,15 @@ defmodule Hmnt.MixProject do
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      dialyzer: dialyzer(),
       aliases: aliases(),
       deps: deps()
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [precommit: :test]
     ]
   end
 
@@ -29,6 +36,14 @@ defmodule Hmnt.MixProject do
 
   defp aliases do
     [
+      precommit: [
+        "deps.unlock --check-unused",
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "xref graph --label compile-connected --fail-above 0",
+        "test --warnings-as-errors",
+        "credo suggest --min-priority=normal"
+      ],
       test: ["cmd epmd -daemon", "test --no-start"]
     ]
   end
@@ -39,8 +54,17 @@ defmodule Hmnt.MixProject do
       {:phoenix_pubsub, "~> 2.0"},
       {:ecto, "~> 3.0"},
       {:ex_hash_ring, "~> 6.0"},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
       {:ecto_sqlite3, "~> 0.18", only: :test},
       {:local_cluster, "~> 2.0", only: :test}
+    ]
+  end
+
+  defp dialyzer do
+    [
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      flags: [:error_handling, :unknown]
     ]
   end
 end

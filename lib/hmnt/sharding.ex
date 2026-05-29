@@ -16,12 +16,11 @@ defmodule Hmnt.Sharding do
     :net_kernel.monitor_nodes(true, node_type: :visible)
 
     {:ok, ring} = Ring.start_link()
-    local = node()
-    Ring.add_node(ring, local)
 
-    for n <- Node.list(), do: Ring.add_node(ring, n)
+    Ring.add_node(ring, node() |> to_string())
+    for n <- Node.list(), do: Ring.add_node(ring, to_string(n))
 
-    {:ok, %{ring: ring, local_node: local}}
+    {:ok, %{ring: ring, local_node: node()}}
   end
 
   @impl true
@@ -29,6 +28,8 @@ defmodule Hmnt.Sharding do
     state = sync_local_node(state)
     hashable = :erlang.term_to_binary(key)
     {:ok, node} = Ring.find_node(state.ring, hashable)
+    # Convert back to atom for easier usage in Registry keys, etc.
+    node = String.to_atom(node)
     {:reply, node, state}
   end
 
@@ -36,19 +37,19 @@ defmodule Hmnt.Sharding do
   defp sync_local_node(%{local_node: same} = state) when same == node(), do: state
 
   defp sync_local_node(%{local_node: old, ring: ring} = state) do
-    Ring.remove_node(ring, old)
-    Ring.add_node(ring, node())
+    Ring.remove_node(ring, old |> to_string())
+    Ring.add_node(ring, node() |> to_string())
     %{state | local_node: node()}
   end
 
   @impl true
   def handle_info({:nodeup, node, _info}, state) do
-    Ring.add_node(state.ring, node)
+    Ring.add_node(state.ring, to_string(node))
     {:noreply, state}
   end
 
   def handle_info({:nodedown, node, _info}, state) do
-    Ring.remove_node(state.ring, node)
+    Ring.remove_node(state.ring, to_string(node))
     {:noreply, state}
   end
 end

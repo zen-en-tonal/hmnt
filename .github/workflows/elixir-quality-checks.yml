@@ -1,0 +1,45 @@
+name: Elixir Quality Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  quality_checks:
+    name: Formatting, Credo, and Xref
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    strategy:
+      fail-fast: false
+      matrix:
+        elixir: ["1.19.0"]
+        otp: ["28.0"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir Project
+        uses: ./.github/actions/elixir-setup
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          build-app: false
+
+      - name: Check for unused deps
+        run: mix deps.unlock --check-unused
+
+      - name: Check code formatting
+        if: always()
+        run: mix format --check-formatted
+
+      - name: Run Credo
+        if: always()
+        run: mix credo suggest --min-priority=normal
+
+      - name: Check compile-time dependencies
+        if: always()
+        run: mix xref graph --label compile-connected --fail-above 0
