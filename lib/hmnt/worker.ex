@@ -69,7 +69,7 @@ defmodule Hmnt.Worker do
   #   then apply this event only if the replay didn't already cover it.
   @impl true
   def handle_cast({:event, event}, state) do
-    {id, idx} = Projection.identity(state.projection, event)
+    {_id, idx} = Projection.identity(state.projection, event)
     last_idx = last_seen(state.projection_state)
 
     cond do

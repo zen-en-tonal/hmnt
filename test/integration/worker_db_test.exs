@@ -151,8 +151,10 @@ defmodule Hmnt.Integration.WorkerDbTest do
     end
   end
 
-  describe "multi-tenant DB isolation" do
-    test "two tenants write to same table without interfering", %{name: name} do
+  describe "multiple tenants sharing one repo" do
+    test "two tenants with different entity ids write to the same table without interfering", %{
+      name: name
+    } do
       id2 = System.unique_integer([:positive, :monotonic])
       name2 = :"db_test_tenant2_#{id2}"
 
@@ -168,7 +170,7 @@ defmodule Hmnt.Integration.WorkerDbTest do
           id: name2
         )
 
-      # Different entity IDs per tenant — they share the table but must not interfere
+      # Shared repo/table is supported as long as each tenant persists distinct entity keys.
       notify(name, 50, 1)
       notify(name2, 51, 1)
 

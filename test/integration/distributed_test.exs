@@ -13,7 +13,7 @@ defmodule Hmnt.Integration.DistributedTest do
     :rpc.call(node, mod, fun, args)
   end
 
-  defp start_tenant_on(node, name, opts \\ []) do
+  defp start_tenant_on(node, name, opts) do
     args = Keyword.merge([name: name, projections: [], repo: nil, suspend_after: 5_000], opts)
     # Start as a child of the stable ApplicationSupervisor to avoid the
     # rpc-handler-link problem: if started via start_link directly, the
@@ -28,6 +28,21 @@ defmodule Hmnt.Integration.DistributedTest do
     case rpc(node, Registry, :lookup, [Hmnt.WorkerRegistry, via_key]) do
       [{_pid, _}] -> true
       _ -> false
+    end
+  end
+
+  defp worker_count_on(node, tenant, projection, entity_id) do
+    via_key = {tenant, projection, entity_id}
+
+    case rpc(node, Registry, :lookup, [Hmnt.WorkerRegistry, via_key]) do
+      [{pid, _}] ->
+        case rpc(node, :sys, :get_state, [pid]) do
+          %{projection_state: %{count: count}} -> count
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 
@@ -182,29 +197,49 @@ defmodule Hmnt.Integration.DistributedTest do
         Enum.any?(all_nodes, &worker_alive_on?(&1, tenant, Hmnt.Test.CounterProjection, 42))
       end)
 
+      # Verify the event was actually applied, not just that the worker started.
+      wait_until(fn ->
+        Enum.any?(all_nodes, &(worker_count_on(&1, tenant, Hmnt.Test.CounterProjection, 42) == 1))
+      end)
+
       # Verify the worker landed on the node Sharding currently maps the key to
       sharded_node = Hmnt.Sharding.node_for({tenant, Hmnt.Test.CounterProjection, 42})
       assert sharded_node in all_nodes
       assert worker_alive_on?(sharded_node, tenant, Hmnt.Test.CounterProjection, 42)
+      assert worker_count_on(sharded_node, tenant, Hmnt.Test.CounterProjection, 42) == 1
     end
 
-    test "two tenants on the same cluster maintain separate routing tables", %{
+    test "same entity id is routed independently per tenant", %{
       node1: node1,
       node2: node2
     } do
       tenant_a = :dist_multi_a
       tenant_b = :dist_multi_b
       all_nodes = [node(), node1, node2]
+      entity_id = 1
 
       for t <- [tenant_a, tenant_b], n <- all_nodes do
-        start_tenant_on(n, t)
+        start_tenant_on(n, t, projections: [Hmnt.Test.CounterProjection], repo: nil)
       end
 
-      node_a = Hmnt.Sharding.node_for({tenant_a, :proj, 1})
-      node_b = Hmnt.Sharding.node_for({tenant_b, :proj, 1})
+      rpc(node(), Hmnt, :notify, [tenant_a, %{entity_id: entity_id, index: 1, type: "Increment"}])
+      rpc(node(), Hmnt, :notify, [tenant_b, %{entity_id: entity_id, index: 1, type: "Increment"}])
+
+      wait_until(fn ->
+        Enum.any?(all_nodes, &worker_alive_on?(&1, tenant_a, Hmnt.Test.CounterProjection, entity_id))
+      end)
+
+      wait_until(fn ->
+        Enum.any?(all_nodes, &worker_alive_on?(&1, tenant_b, Hmnt.Test.CounterProjection, entity_id))
+      end)
+
+      node_a = Hmnt.Sharding.node_for({tenant_a, Hmnt.Test.CounterProjection, entity_id})
+      node_b = Hmnt.Sharding.node_for({tenant_b, Hmnt.Test.CounterProjection, entity_id})
 
       assert node_a in all_nodes
       assert node_b in all_nodes
+      assert worker_count_on(node_a, tenant_a, Hmnt.Test.CounterProjection, entity_id) == 1
+      assert worker_count_on(node_b, tenant_b, Hmnt.Test.CounterProjection, entity_id) == 1
     end
   end
 end
