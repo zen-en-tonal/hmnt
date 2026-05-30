@@ -17,22 +17,60 @@ defmodule HmntTest do
 
     def get_by(schema, id: id), do: get_by(schema, [{:id, id}])
 
+    def one(%Ecto.Query{from: %{source: {_table, schema}}, wheres: wheres}) do
+      {key, id} = extract_lookup(wheres)
+
+      if key && id do
+        get_by(schema, [{key, id}])
+      end
+    end
+
+    def one(_), do: nil
+
     def insert_or_update!(%Ecto.Changeset{} = cs) do
       record = Ecto.Changeset.apply_changes(cs)
-      pk = primary_key(record)
-      Agent.update(__MODULE__, &Map.put(&1, {record.__struct__, :id, pk}, record))
+      Agent.update(__MODULE__, &store_record(&1, record))
       record
     end
 
     def insert_or_update!(record) do
-      pk = primary_key(record)
-      Agent.update(__MODULE__, &Map.put(&1, {record.__struct__, :id, pk}, record))
+      Agent.update(__MODULE__, &store_record(&1, record))
       record
     end
+
+    def insert(record), do: {:ok, insert_or_update!(record)}
+    def update(record), do: {:ok, insert_or_update!(record)}
+
+    def transact(fun) when is_function(fun, 0), do: fun.()
 
     defp primary_key(record) do
       Map.get(record, :id) || Map.get(record, :entity_id)
     end
+
+    defp store_record(state, record) do
+      schema = record.__struct__
+      pk = primary_key(record)
+
+      state
+      |> Map.put({schema, :id, pk}, record)
+      |> maybe_put({schema, :entity_id, Map.get(record, :entity_id)}, record)
+    end
+
+    defp maybe_put(state, {_schema, _key, nil}, _record), do: state
+    defp maybe_put(state, key, record), do: Map.put(state, key, record)
+
+    defp extract_lookup([%{params: params} | _]) do
+      key = Enum.find_value(params, fn {value, _meta} -> if is_atom(value), do: value end)
+
+      id =
+        Enum.find_value(params, fn {value, _meta} ->
+          if is_integer(value) or is_binary(value), do: value
+        end)
+
+      {key, id}
+    end
+
+    defp extract_lookup(_), do: {nil, nil}
 
     def all, do: Agent.get(__MODULE__, &Map.values/1)
     def reset, do: Agent.update(__MODULE__, fn _ -> %{} end)

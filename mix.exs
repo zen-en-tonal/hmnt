@@ -57,7 +57,8 @@ defmodule Hmnt.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:benchee, "~> 1.3", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
-      {:ecto_sqlite3, "~> 0.18", only: :test},
+      {:ecto_sql, "~> 3.14", only: :test},
+      {:postgrex, "~> 0.19", only: :test},
       {:local_cluster, "~> 2.0", only: :test},
       {:stream_data, "~> 1.1", only: :test}
     ]

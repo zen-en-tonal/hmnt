@@ -19,3 +19,26 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at <https://hexdocs.pm/hmnt>.
 
+## Test database (PostgreSQL via Docker Compose)
+
+Start PostgreSQL for tests:
+
+```bash
+docker compose up -d test-db
+```
+
+Then run tests:
+
+```bash
+mix test
+```
+
+Optional environment overrides (defaults shown):
+
+```bash
+HMNT_TEST_DB_HOST=localhost
+HMNT_TEST_DB_PORT=5432
+HMNT_TEST_DB_NAME=hmnt_test
+HMNT_TEST_DB_USER=postgres
+HMNT_TEST_DB_PASSWORD=postgres
+```

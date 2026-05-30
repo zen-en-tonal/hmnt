@@ -7,7 +7,7 @@ defmodule Hmnt.Integration.WorkerDbTest do
   alias Hmnt.Test.{Repo, Migrations, CounterProjection, SourceCounterProjection}
 
   # ---------------------------------------------------------------------------
-  # Setup: fresh in-memory table per test
+  # Setup: fresh tables per test
   # ---------------------------------------------------------------------------
 
   setup do

@@ -1,7 +1,7 @@
 defmodule Hmnt.Test.CounterProjection do
   @moduledoc """
   A projection used only in integration tests.
-  Stores a per-entity event count in the `counters` SQLite table.
+  Stores a per-entity event count in the `counters` table.
   """
   use Hmnt.Schema
 

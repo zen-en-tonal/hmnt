@@ -1,9 +1,10 @@
 defmodule Hmnt.Worker do
   use GenServer
-  import Ecto.Query, only: [from: 2]
+  import Ecto.Query
   alias Hmnt.Projection
 
   @default_suspend_after 10_000
+  @default_source_batch_size 100
 
   defstruct [
     :name,
@@ -12,7 +13,8 @@ defmodule Hmnt.Worker do
     :suspend_ref,
     :projection_state,
     :repo,
-    suspend_after: @default_suspend_after
+    suspend_after: @default_suspend_after,
+    source_batch_size: @default_source_batch_size
   ]
 
   def child_spec(args) do
@@ -41,9 +43,10 @@ defmodule Hmnt.Worker do
         id: args[:id],
         projection_state: Projection.initial_state(args[:projection]),
         repo: args[:repo],
-        suspend_after: args[:suspend_after] || @default_suspend_after
+        source_batch_size: args[:source_batch_size] || @default_source_batch_size,
+        suspend_after: args[:suspend_after] || @default_suspend_after,
+        suspend_ref: nil
       }
-      |> schedule_suspend()
 
     {:ok, state, {:continue, :start_work}}
   end
@@ -54,10 +57,9 @@ defmodule Hmnt.Worker do
     projection_state = snapshot || state.projection_state
     last_idx = last_seen(snapshot)
 
-    state = replay(last_idx, %{state | projection_state: projection_state})
-
-    persisted = persist_snapshot(state.repo, state.projection_state)
-    state = if persisted, do: %{state | projection_state: persisted}, else: state
+    state =
+      replay(last_idx, %{state | projection_state: projection_state})
+      |> persist_snapshot()
 
     {:noreply, schedule_suspend(state)}
   end
@@ -82,10 +84,11 @@ defmodule Hmnt.Worker do
           |> Projection.handle_event(event, state.projection_state)
           |> Map.put(:last_event_index, idx)
 
-        persisted = persist_snapshot(state.repo, new_projection_state)
-        final_state = persisted || new_projection_state
+        state =
+          %{state | projection_state: new_projection_state}
+          |> persist_snapshot()
 
-        {:noreply, schedule_suspend(%{state | projection_state: final_state})}
+        {:noreply, schedule_suspend(state)}
 
       idx > last_idx + 1 ->
         # Gap: replay missing events from source, then apply the current event
@@ -100,9 +103,8 @@ defmodule Hmnt.Worker do
               |> Projection.handle_event(event, state.projection_state)
               |> Map.put(:last_event_index, idx)
 
-            persisted = persist_snapshot(state.repo, new_projection_state)
-            final_state = persisted || new_projection_state
-            %{state | projection_state: final_state}
+            %{state | projection_state: new_projection_state}
+            |> persist_snapshot()
           else
             state
           end
@@ -113,7 +115,7 @@ defmodule Hmnt.Worker do
 
   @impl true
   def handle_info(:suspend, state) do
-    persist_snapshot(state.repo, state.projection_state)
+    persist_snapshot(state)
     {:stop, :normal, state}
   end
 
@@ -136,53 +138,57 @@ defmodule Hmnt.Worker do
     repo.get_by(projection, [{key, id}])
   end
 
-  defp persist_snapshot(nil, _projection_state), do: nil
+  defp persist_snapshot(%__MODULE__{repo: nil} = state), do: state
 
-  defp persist_snapshot(repo, projection_state) do
-    projection = projection_state.__struct__
+  defp persist_snapshot(%__MODULE__{} = state) do
+    repo = state.repo
+    projection = state.projection_state.__struct__
+    projection_state = state.projection_state
+
     key = entity_key(projection)
+    id = state.id
 
-    if Map.get(projection_state, key) do
-      pk_fields = projection.__schema__(:primary_key)
-      # Timestamps are auto-managed by Ecto; excluding them from explicit changes
-      # prevents nil values from being set (autogenerate fills them on insert/update).
-      update_fields =
-        projection.__schema__(:fields) -- (pk_fields ++ [:inserted_at, :updated_at])
+    repo.transact(fn ->
+      # Attempt to acquire a lock on the record for this projection ID
+      # This is a simple optimistic concurrency control mechanism to prevent
+      # multiple workers from overwriting each other's state when they process
+      # events for the same projection ID concurrently.
+      # TODO: For better performance, consider using database-specific "SELECT ... FOR UPDATE" or similar locking mechanisms if supported by the repo.
+      lock =
+        from(p in projection,
+          where: field(p, ^key) == ^id
+        )
+        |> repo.one()
 
-      changes = Map.take(Map.from_struct(projection_state), update_fields)
-      new_idx = Map.get(projection_state, :last_event_index, 0)
+      if lock do
+        # Record exists: check if our state is newer before updating
+        if projection_state.last_event_index > lock.last_event_index do
+          attrs =
+            Map.from_struct(projection_state)
+            |> Map.drop([:__meta__, :__struct__])
 
-      case projection_state.__meta__.state do
-        :built ->
-          # New record: use force_change so Ecto includes all fields in the INSERT.
-          changeset =
-            Enum.reduce(changes, Ecto.Changeset.change(projection_state), fn {k, v}, cs ->
-              Ecto.Changeset.force_change(cs, k, v)
-            end)
-
-          repo.insert_or_update!(changeset)
-
-        :loaded ->
-          # Existing record: only advance state when our index is strictly newer than
-          # what is already stored (optimistic fencing against stale updates).
-          entity_val = Map.get(projection_state, key)
-
-          changes_with_ts = Map.put(changes, :updated_at, NaiveDateTime.utc_now())
-
-          {rows, _} =
-            repo.update_all(
-              from(p in projection,
-                where: field(p, ^key) == ^entity_val and p.last_event_index < ^new_idx
-              ),
-              set: Enum.to_list(changes_with_ts)
-            )
-
-          # Return the in-memory state when the update lands; nil signals the caller
-          # that the DB was already at the same-or-newer index (stale write skipped).
-          if rows > 0, do: projection_state, else: nil
+          Ecto.Changeset.change(lock, attrs)
+          |> repo.update()
+        else
+          # Our state is stale; skip update to avoid overwriting newer data
+          {:error, {:stale_state, lock}}
+        end
+      else
+        # No existing record: insert new one
+        %{projection_state | key => id}
+        |> repo.insert()
       end
-    else
-      nil
+    end)
+    |> case do
+      {:ok, record} ->
+        %{state | projection_state: record}
+
+      {:error, {:stale_state, record}} ->
+        %{state | projection_state: record}
+
+      {:error, reason} ->
+        IO.inspect(reason, label: "Failed to persist snapshot")
+        state
     end
   end
 
@@ -195,11 +201,11 @@ defmodule Hmnt.Worker do
   defp last_seen(%{}), do: 0
 
   defp replay(index_from, %__MODULE__{} = state) do
-    case Projection.source(state.projection, state.id, index_from, 100) do
+    case Projection.source(state.projection, state.id, index_from, state.source_batch_size) do
       [] ->
         state
 
-      events when length(events) < 100 ->
+      events when length(events) < state.source_batch_size ->
         projection_state =
           Enum.reduce(events, state.projection_state, fn event, acc ->
             Projection.handle_event(state.projection, event, acc)
