@@ -263,13 +263,6 @@ defmodule Hmnt.Worker do
     end
   end
 
-  defp apply_changeset_result(other, previous_state, idx) do
-    invalid_projection_state(previous_state, idx, %{
-      kind: "invalid_handle_event_result",
-      message: "expected Ecto.Changeset, got: #{inspect(other)}"
-    })
-  end
-
   defp invalid_projection_state(projection_state, idx, error) do
     projection_state
     |> Ecto.Changeset.change(%{
