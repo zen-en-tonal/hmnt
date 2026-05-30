@@ -6,7 +6,7 @@ defmodule Hmnt.Projection do
               any()
             ]
 
-  @callback handle_event(event :: any(), state :: any()) :: any()
+  @callback handle_event(event :: any(), state :: any()) :: Ecto.Changeset.t()
 
   @callback initial_state() :: any()
 
@@ -22,7 +22,7 @@ defmodule Hmnt.Projection do
     projection.source(entity_id, last_event_index, limit)
   end
 
-  @spec handle_event(module(), any(), any()) :: any()
+  @spec handle_event(module(), any(), any()) :: Ecto.Changeset.t()
   def handle_event(projection, event, state) do
     projection.handle_event(event, state)
   end

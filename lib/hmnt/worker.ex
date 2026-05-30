@@ -79,13 +79,9 @@ defmodule Hmnt.Worker do
         {:noreply, schedule_suspend(state)}
 
       idx == last_idx + 1 ->
-        new_projection_state =
-          state.projection
-          |> Projection.handle_event(event, state.projection_state)
-          |> Map.put(:last_event_index, idx)
-
         state =
-          %{state | projection_state: new_projection_state}
+          state
+          |> apply_projection_event(event, idx)
           |> persist_snapshot()
 
         {:noreply, schedule_suspend(state)}
@@ -98,12 +94,8 @@ defmodule Hmnt.Worker do
 
         state =
           if idx > replayed_idx do
-            new_projection_state =
-              state.projection
-              |> Projection.handle_event(event, state.projection_state)
-              |> Map.put(:last_event_index, idx)
-
-            %{state | projection_state: new_projection_state}
+            state
+            |> apply_projection_event(event, idx)
             |> persist_snapshot()
           else
             state
@@ -200,32 +192,91 @@ defmodule Hmnt.Worker do
   defp last_seen(%{last_event_index: idx}), do: idx
   defp last_seen(%{}), do: 0
 
+  defp apply_projection_event(%__MODULE__{} = state, event, idx) do
+    projection_state =
+      try do
+        changeset = Projection.handle_event(state.projection, event, state.projection_state)
+        apply_changeset_result(changeset, state.projection_state, idx)
+      rescue
+        exception ->
+          invalid_projection_state(state.projection_state, idx, %{
+            kind: "exception",
+            type: inspect(exception.__struct__),
+            message: Exception.message(exception)
+          })
+      end
+
+    %{state | projection_state: projection_state}
+  end
+
+  defp apply_changeset_result(%Ecto.Changeset{} = changeset, previous_state, idx) do
+    changeset = Ecto.Changeset.change(changeset, last_event_index: idx)
+
+    if changeset.valid? do
+      changeset
+      |> Ecto.Changeset.change(%{
+        projection_status: :healthy,
+        last_error: nil,
+        last_error_at: nil
+      })
+      |> Ecto.Changeset.apply_changes()
+    else
+      invalid_projection_state(previous_state, idx, %{
+        kind: "validation_error",
+        errors: format_changeset_errors(changeset)
+      })
+    end
+  end
+
+  defp apply_changeset_result(other, previous_state, idx) do
+    invalid_projection_state(previous_state, idx, %{
+      kind: "invalid_handle_event_result",
+      message: "expected Ecto.Changeset, got: #{inspect(other)}"
+    })
+  end
+
+  defp invalid_projection_state(projection_state, idx, error) do
+    projection_state
+    |> Ecto.Changeset.change(%{
+      last_event_index: idx,
+      projection_status: :invalid,
+      last_error: error,
+      last_error_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    })
+    |> Ecto.Changeset.apply_changes()
+  end
+
+  defp format_changeset_errors(changeset) do
+    Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->
+      Enum.reduce(opts, message, fn {key, value}, acc ->
+        String.replace(acc, "%{#{key}}", to_string(value))
+      end)
+    end)
+  end
+
   defp replay(index_from, %__MODULE__{} = state) do
     case Projection.source(state.projection, state.id, index_from, state.source_batch_size) do
       [] ->
         state
 
       events when length(events) < state.source_batch_size ->
-        projection_state =
-          Enum.reduce(events, state.projection_state, fn event, acc ->
-            Projection.handle_event(state.projection, event, acc)
-          end)
-
-        {_, last_idx} = Projection.identity(state.projection, List.last(events))
-        projection_state = %{projection_state | last_event_index: last_idx}
-
-        %{state | projection_state: projection_state}
+        Enum.reduce(events, state, fn event, acc ->
+          case Projection.identity(acc.projection, event) do
+            {_id, idx} -> apply_projection_event(acc, event, idx)
+            _ -> acc
+          end
+        end)
 
       events ->
-        projection_state =
-          Enum.reduce(events, state.projection_state, fn event, acc ->
-            Projection.handle_event(state.projection, event, acc)
+        state =
+          Enum.reduce(events, state, fn event, acc ->
+            case Projection.identity(acc.projection, event) do
+              {_id, idx} -> apply_projection_event(acc, event, idx)
+              _ -> acc
+            end
           end)
 
-        {_, last_idx} = Projection.identity(state.projection, List.last(events))
-        projection_state = %{projection_state | last_event_index: last_idx}
-
-        replay(last_idx, %{state | projection_state: projection_state})
+        replay(last_seen(state.projection_state), state)
     end
   end
 end

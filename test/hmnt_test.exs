@@ -93,7 +93,7 @@ defmodule HmntTest do
 
     @impl true
     def handle_event(%{entity_id: _id}, state) do
-      %{state | count: state.count + 1}
+      Ecto.Changeset.change(state, %{count: state.count + 1})
     end
   end
 
@@ -102,10 +102,16 @@ defmodule HmntTest do
   # ---------------------------------------------------------------------------
 
   describe "Hmnt.Schema" do
-    test "injects last_event_index field with default 0" do
+    test "injects projection system fields with defaults" do
       s = CounterProjection.initial_state()
       assert Map.has_key?(s, :last_event_index)
+      assert Map.has_key?(s, :projection_status)
+      assert Map.has_key?(s, :last_error)
+      assert Map.has_key?(s, :last_error_at)
       assert s.last_event_index == 0
+      assert s.projection_status == :healthy
+      assert s.last_error == nil
+      assert s.last_error_at == nil
     end
 
     test "initial_state/0 returns an empty struct" do
@@ -119,6 +125,9 @@ defmodule HmntTest do
       assert Map.has_key?(s, :entity_id)
       assert Map.has_key?(s, :count)
       assert Map.has_key?(s, :last_event_index)
+      assert Map.has_key?(s, :projection_status)
+      assert Map.has_key?(s, :last_error)
+      assert Map.has_key?(s, :last_error_at)
     end
 
     test "implements Hmnt.Projection behaviour" do
@@ -151,7 +160,7 @@ defmodule HmntTest do
         def source(_, _, _), do: []
 
         @impl true
-        def handle_event(_, state), do: state
+        def handle_event(_, state), do: Ecto.Changeset.change(state)
       end
 
       assert {7, 3} = CustomIdentity.identity(%{value: 7, index: 3})
@@ -161,9 +170,17 @@ defmodule HmntTest do
 
     test "handle_event/2 increments count" do
       state = CounterProjection.initial_state()
-      state = CounterProjection.handle_event(%{entity_id: 1}, state)
+
+      state =
+        CounterProjection.handle_event(%{entity_id: 1}, state)
+        |> Ecto.Changeset.apply_changes()
+
       assert state.count == 1
-      state = CounterProjection.handle_event(%{entity_id: 1}, state)
+
+      state =
+        CounterProjection.handle_event(%{entity_id: 1}, state)
+        |> Ecto.Changeset.apply_changes()
+
       assert state.count == 2
     end
 
@@ -180,7 +197,7 @@ defmodule HmntTest do
         @impl true
         def source(_, _, _), do: []
         @impl true
-        def handle_event(_, state), do: state
+        def handle_event(_, state), do: Ecto.Changeset.change(state)
 
         @impl true
         def initial_state(), do: %__MODULE__{value: 42}
@@ -205,7 +222,9 @@ defmodule HmntTest do
     test "handle_event/3 delegates to projection module" do
       state = CounterProjection.initial_state()
       result = Hmnt.Projection.handle_event(CounterProjection, %{entity_id: 1}, state)
-      assert result.count == 1
+      assert %Ecto.Changeset{} = result
+      assert result.valid?
+      assert Ecto.Changeset.apply_changes(result).count == 1
     end
 
     test "initial_state/1 returns empty struct when not overridden" do
@@ -214,6 +233,19 @@ defmodule HmntTest do
 
     test "source/4 delegates to projection module" do
       assert [] = Hmnt.Projection.source(CounterProjection, 1, 0, 100)
+    end
+  end
+
+  describe "Hmnt.Migration" do
+    test "projection/0 expands to projection tracking columns" do
+      require Hmnt.Migration
+      expanded = Macro.expand(quote(do: Hmnt.Migration.projection()), __ENV__)
+      code = Macro.to_string(expanded)
+
+      assert code =~ "add(:last_event_index, :bigint, null: false, default: 0)"
+      assert code =~ "add(:projection_status, :string, null: false, default: \"healthy\")"
+      assert code =~ "add(:last_error, :map)"
+      assert code =~ "add(:last_error_at, :utc_datetime)"
     end
   end
 

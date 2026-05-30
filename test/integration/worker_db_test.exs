@@ -75,6 +75,26 @@ defmodule Hmnt.Integration.WorkerDbTest do
     end
   end
 
+  defp wait_for_last_event_index(entity_id, expected, retries \\ 40) do
+    record = Repo.get_by(CounterProjection, entity_id: entity_id)
+
+    cond do
+      record && record.last_event_index == expected ->
+        record
+
+      retries > 0 ->
+        Process.sleep(50)
+        wait_for_last_event_index(entity_id, expected, retries - 1)
+
+      true ->
+        actual = record && record.last_event_index
+
+        flunk(
+          "Expected last_event_index #{expected} for entity #{entity_id}, got #{inspect(actual)}"
+        )
+    end
+  end
+
   defp wait_for_worker_down(name, projection, entity_id, retries \\ 40) do
     via = Hmnt.Worker.via(name, projection, entity_id)
 
@@ -121,6 +141,53 @@ defmodule Hmnt.Integration.WorkerDbTest do
       r20 = Repo.get_by(CounterProjection, entity_id: 20)
       assert r10.count == 2
       assert r20.count == 1
+    end
+
+    test "validation errors are persisted and last_event_index advances", %{name: name} do
+      notify(name, 70, 1, "Invalid")
+      record = wait_for_last_event_index(70, 1)
+
+      assert record.projection_status == :invalid
+      assert is_map(record.last_error)
+      assert record.last_error["kind"] == "validation_error"
+      assert record.last_error["errors"]["count"] == ["must be greater than or equal to 0"]
+      assert record.last_error_at != nil
+    end
+
+    test "invalid changeset event index is consumed and duplicate index is skipped", %{name: name} do
+      notify(name, 72, 1, "Invalid")
+      invalid = wait_for_last_event_index(72, 1)
+
+      assert invalid.count == 0
+      assert invalid.projection_status == :invalid
+      assert invalid.last_error["kind"] == "validation_error"
+
+      # Duplicate idx=1 must be ignored because invalid event already advanced last_event_index.
+      notify(name, 72, 1, "Increment")
+      Process.sleep(200)
+
+      skipped = Repo.get_by(CounterProjection, entity_id: 72)
+      assert skipped.last_event_index == 1
+      assert skipped.count == 0
+      assert skipped.projection_status == :invalid
+    end
+
+    test "exceptions are persisted and later valid events recover status", %{name: name} do
+      notify(name, 71, 1, "Explode")
+      record = wait_for_last_event_index(71, 1)
+
+      assert record.projection_status == :invalid
+      assert is_map(record.last_error)
+      assert record.last_error["kind"] == "exception"
+      assert record.last_error_at != nil
+
+      notify(name, 71, 2, "Increment")
+      recovered = wait_for_count(71, 1)
+
+      assert recovered.last_event_index == 2
+      assert recovered.projection_status == :healthy
+      assert recovered.last_error == nil
+      assert recovered.last_error_at == nil
     end
   end
 

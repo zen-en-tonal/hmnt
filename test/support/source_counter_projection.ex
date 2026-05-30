@@ -32,8 +32,8 @@ defmodule Hmnt.Test.SourceCounterProjection do
 
   @impl true
   def handle_event(%{type: "Increment"} = event, state) do
-    %{state | count: state.count + 1, entity_id: event.entity_id}
+    Ecto.Changeset.change(state, %{count: state.count + 1, entity_id: event.entity_id})
   end
 
-  def handle_event(_event, state), do: state
+  def handle_event(_event, state), do: Ecto.Changeset.change(state)
 end

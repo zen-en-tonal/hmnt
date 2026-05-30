@@ -22,8 +22,16 @@ defmodule Hmnt.Test.CounterProjection do
 
   @impl true
   def handle_event(%{type: "Increment"} = event, state) do
-    %{state | count: state.count + 1, entity_id: event.entity_id}
+    Ecto.Changeset.change(state, %{count: state.count + 1, entity_id: event.entity_id})
   end
 
-  def handle_event(_event, state), do: state
+  def handle_event(%{type: "Invalid"}, state) do
+    state
+    |> Ecto.Changeset.cast(%{count: -1}, [:count])
+    |> Ecto.Changeset.validate_number(:count, greater_than_or_equal_to: 0)
+  end
+
+  def handle_event(%{type: "Explode"}, _state), do: raise("simulated projection crash")
+
+  def handle_event(_event, state), do: Ecto.Changeset.change(state)
 end

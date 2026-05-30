@@ -7,6 +7,8 @@ defmodule Hmnt.Schema do
   - Full `Ecto.Schema` support via the `schema/2` macro
   - `field :last_event_index, :integer, default: 0` automatically injected into
     every `schema` block
+  - Projection health fields (`:projection_status`, `:last_error`, `:last_error_at`)
+    automatically injected into every `schema` block
   - `@behaviour Hmnt.Projection` with a default `initial_state/0` implementation
     that returns an empty struct of the calling module
 
@@ -37,7 +39,7 @@ defmodule Hmnt.Schema do
 
         @impl true
         def handle_event(%{type: "UserCreated", data: data}, state) do
-          %{state | name: data["name"], email: data["email"]}
+          Ecto.Changeset.cast(state, data, [:name, :email])
         end
       end
   """
@@ -45,7 +47,7 @@ defmodule Hmnt.Schema do
   defmacro __using__(_opts) do
     quote do
       use Ecto.Schema
-      # Shadow Ecto.Schema.schema/2 with our own version that injects last_event_index
+      # Shadow Ecto.Schema.schema/2 with our own version that injects system fields
       import Ecto.Schema, except: [schema: 2]
       import Hmnt.Schema, only: [schema: 2]
 
@@ -70,13 +72,21 @@ defmodule Hmnt.Schema do
 
   @doc """
   Defines the Ecto schema for this projection, automatically injecting
-  `field :last_event_index, :integer, default: 0`.
+  system projection fields.
   """
   defmacro schema(source, do: block) do
     quote do
       Ecto.Schema.schema unquote(source) do
         unquote(block)
         Ecto.Schema.field(:last_event_index, :integer, default: 0)
+
+        Ecto.Schema.field(:projection_status, Ecto.Enum,
+          values: [:healthy, :invalid],
+          default: :healthy
+        )
+
+        Ecto.Schema.field(:last_error, :map)
+        Ecto.Schema.field(:last_error_at, :utc_datetime)
       end
     end
   end

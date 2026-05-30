@@ -10,12 +10,14 @@ defmodule Hmnt.Test.Migrations do
   def create_counters_table! do
     Ecto.Adapters.SQL.query!(Repo, """
     CREATE TABLE IF NOT EXISTS counters (
-      id BIGSERIAL PRIMARY KEY,
-      entity_id BIGINT NOT NULL UNIQUE,
-      count BIGINT NOT NULL DEFAULT 0,
+      entity_id BIGINT PRIMARY KEY,
+      count BIGINT,
+      inserted_at TIMESTAMP(0),
+      updated_at TIMESTAMP(0),
       last_event_index BIGINT NOT NULL DEFAULT 0,
-      inserted_at TIMESTAMP(0) NOT NULL DEFAULT now(),
-      updated_at TIMESTAMP(0) NOT NULL DEFAULT now()
+      projection_status TEXT NOT NULL DEFAULT 'healthy',
+      last_error JSONB,
+      last_error_at TIMESTAMP(0)
     )
     """)
   end
@@ -27,12 +29,14 @@ defmodule Hmnt.Test.Migrations do
   def create_source_counters_table! do
     Ecto.Adapters.SQL.query!(Repo, """
     CREATE TABLE IF NOT EXISTS source_counters (
-      id BIGSERIAL PRIMARY KEY,
-      entity_id BIGINT NOT NULL UNIQUE,
-      count BIGINT NOT NULL DEFAULT 0,
+      entity_id BIGINT PRIMARY KEY,
+      count BIGINT,
+      inserted_at TIMESTAMP(0),
+      updated_at TIMESTAMP(0),
       last_event_index BIGINT NOT NULL DEFAULT 0,
-      inserted_at TIMESTAMP(0) NOT NULL DEFAULT now(),
-      updated_at TIMESTAMP(0) NOT NULL DEFAULT now()
+      projection_status TEXT NOT NULL DEFAULT 'healthy',
+      last_error JSONB,
+      last_error_at TIMESTAMP(0)
     )
     """)
   end
