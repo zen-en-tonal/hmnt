@@ -60,6 +60,27 @@ defmodule Hmnt.Test.Migrations do
     Ecto.Adapters.SQL.query!(Repo, "DROP TABLE IF EXISTS counter_events")
   end
 
+  def create_composite_counters_table! do
+    Ecto.Adapters.SQL.query!(Repo, """
+    CREATE TABLE IF NOT EXISTS composite_counters (
+      tenant_id BIGINT NOT NULL,
+      entity_id BIGINT NOT NULL,
+      count BIGINT,
+      inserted_at TIMESTAMP(0),
+      updated_at TIMESTAMP(0),
+      last_event_index BIGINT NOT NULL DEFAULT 0,
+      projection_status TEXT NOT NULL DEFAULT 'healthy',
+      last_error JSONB,
+      last_error_at TIMESTAMP(0),
+      PRIMARY KEY (tenant_id, entity_id)
+    )
+    """)
+  end
+
+  def drop_composite_counters_table! do
+    Ecto.Adapters.SQL.query!(Repo, "DROP TABLE IF EXISTS composite_counters")
+  end
+
   def append_counter_event!(entity_id, index, type \\ "Increment") do
     Ecto.Adapters.SQL.query!(
       Repo,

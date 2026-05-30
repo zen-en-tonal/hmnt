@@ -126,8 +126,7 @@ defmodule Hmnt.Worker do
   defp fetch_snapshot(nil, _projection, _id), do: nil
 
   defp fetch_snapshot(repo, projection, id) do
-    key = entity_key(projection)
-    repo.get_by(projection, [{key, id}])
+    repo.get_by(projection, primary_key_filters(projection, id))
   end
 
   defp persist_snapshot(%__MODULE__{repo: nil} = state), do: state
@@ -137,8 +136,8 @@ defmodule Hmnt.Worker do
     projection = state.projection_state.__struct__
     projection_state = state.projection_state
 
-    key = entity_key(projection)
-    id = state.id
+    filters = primary_key_filters(projection, state.id)
+    where_clause = primary_key_where(filters)
 
     repo.transact(fn ->
       # Attempt to acquire a lock on the record for this projection ID
@@ -148,7 +147,7 @@ defmodule Hmnt.Worker do
       # TODO: For better performance, consider using database-specific "SELECT ... FOR UPDATE" or similar locking mechanisms if supported by the repo.
       lock =
         from(p in projection,
-          where: field(p, ^key) == ^id
+          where: ^where_clause
         )
         |> repo.one()
 
@@ -167,7 +166,8 @@ defmodule Hmnt.Worker do
         end
       else
         # No existing record: insert new one
-        %{projection_state | key => id}
+        projection_state
+        |> assign_primary_keys(filters)
         |> repo.insert()
       end
     end)
@@ -178,14 +178,49 @@ defmodule Hmnt.Worker do
       {:error, {:stale_state, record}} ->
         %{state | projection_state: record}
 
-      {:error, reason} ->
-        IO.inspect(reason, label: "Failed to persist snapshot")
+      {:error, _reason} ->
         state
     end
   end
 
-  defp entity_key(projection) do
-    projection.__schema__(:primary_key) |> hd()
+  defp primary_key_filters(projection, id) do
+    keys = projection.__schema__(:primary_key)
+
+    case keys do
+      [single_key] ->
+        [{single_key, id}]
+
+      key_list ->
+        values =
+          cond do
+            is_map(id) ->
+              Enum.map(key_list, fn key -> Map.fetch!(id, key) end)
+
+            is_tuple(id) and tuple_size(id) == length(key_list) ->
+              Tuple.to_list(id)
+
+            is_list(id) and length(id) == length(key_list) ->
+              id
+
+            true ->
+              raise ArgumentError,
+                    "projection #{inspect(projection)} expects #{length(key_list)} primary keys #{inspect(key_list)}, got id=#{inspect(id)}"
+          end
+
+        Enum.zip(key_list, values)
+    end
+  end
+
+  defp primary_key_where(filters) do
+    Enum.reduce(filters, dynamic(true), fn {key, value}, dyn ->
+      dynamic([p], ^dyn and field(p, ^key) == ^value)
+    end)
+  end
+
+  defp assign_primary_keys(projection_state, filters) do
+    Enum.reduce(filters, projection_state, fn {key, value}, acc ->
+      Map.put(acc, key, value)
+    end)
   end
 
   defp last_seen(nil), do: 0

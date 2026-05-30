@@ -4,7 +4,13 @@ defmodule Hmnt.Integration.WorkerDbTest do
   @moduletag :integration
   @moduletag timeout: 15_000
 
-  alias Hmnt.Test.{Repo, Migrations, CounterProjection, SourceCounterProjection}
+  alias Hmnt.Test.{
+    Repo,
+    Migrations,
+    CounterProjection,
+    SourceCounterProjection,
+    CompositeCounterProjection
+  }
 
   # ---------------------------------------------------------------------------
   # Setup: fresh tables per test
@@ -17,6 +23,8 @@ defmodule Hmnt.Integration.WorkerDbTest do
     Migrations.create_source_counters_table!()
     Migrations.drop_counter_events_table!()
     Migrations.create_counter_events_table!()
+    Migrations.drop_composite_counters_table!()
+    Migrations.create_composite_counters_table!()
 
     id = System.unique_integer([:positive, :monotonic])
     name = :"db_test_#{id}"
@@ -292,6 +300,39 @@ defmodule Hmnt.Integration.WorkerDbTest do
     end
   end
 
+  describe "composite primary keys" do
+    test "persists snapshots keyed by all primary key fields" do
+      composite_name = :"composite_db_test_#{System.unique_integer([:positive, :monotonic])}"
+
+      {:ok, _} =
+        start_supervised(
+          {Hmnt,
+           [
+             name: composite_name,
+             projections: [CompositeCounterProjection],
+             repo: Repo,
+             suspend_after: 200
+           ]},
+          id: composite_name
+        )
+
+      Hmnt.notify(composite_name, %{tenant_id: 1, entity_id: 100, index: 1, type: "Increment"})
+      Hmnt.notify(composite_name, %{tenant_id: 1, entity_id: 100, index: 2, type: "Increment"})
+      Hmnt.notify(composite_name, %{tenant_id: 2, entity_id: 100, index: 1, type: "Increment"})
+
+      wait_for_composite_count(1, 100, 2)
+      wait_for_composite_count(2, 100, 1)
+
+      first = Repo.get_by(CompositeCounterProjection, tenant_id: 1, entity_id: 100)
+      second = Repo.get_by(CompositeCounterProjection, tenant_id: 2, entity_id: 100)
+
+      assert first.count == 2
+      assert first.last_event_index == 2
+      assert second.count == 1
+      assert second.last_event_index == 1
+    end
+  end
+
   describe "source replay from DB events" do
     test "appended DB events are replayed when notify arrives with a gap" do
       source_name = :"source_db_test_#{System.unique_integer([:positive, :monotonic])}"
@@ -359,6 +400,26 @@ defmodule Hmnt.Integration.WorkerDbTest do
       true ->
         actual = record && record.count
         flunk("Expected source count #{expected} for entity #{entity_id}, got #{inspect(actual)}")
+    end
+  end
+
+  defp wait_for_composite_count(tenant_id, entity_id, expected, retries \\ 40) do
+    record = Repo.get_by(CompositeCounterProjection, tenant_id: tenant_id, entity_id: entity_id)
+
+    cond do
+      record && record.count == expected ->
+        record
+
+      retries > 0 ->
+        Process.sleep(50)
+        wait_for_composite_count(tenant_id, entity_id, expected, retries - 1)
+
+      true ->
+        actual = record && record.count
+
+        flunk(
+          "Expected composite count #{expected} for tenant #{tenant_id} entity #{entity_id}, got #{inspect(actual)}"
+        )
     end
   end
 end

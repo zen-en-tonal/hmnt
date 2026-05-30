@@ -1,6 +1,6 @@
 defmodule Hmnt.Projection do
-  # TODO: Find a better name for identity/1
-  @callback identity(event :: any()) :: {entity_id :: any(), event_index :: integer()} | nil
+  @type entity_id :: any() | list(any())
+  @callback identity(event :: any()) :: {entity_id(), event_index :: integer()} | nil
 
   @callback source(entity_id :: any(), last_event_index :: integer(), limit :: integer()) :: [
               any()
@@ -12,7 +12,7 @@ defmodule Hmnt.Projection do
 
   @optional_callbacks initial_state: 0
 
-  @spec identity(module(), any()) :: {any(), integer()} | nil
+  @spec identity(module(), any()) :: {entity_id(), integer()} | nil
   def identity(projection, event) do
     projection.identity(event)
   end

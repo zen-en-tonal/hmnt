@@ -85,6 +85,27 @@ defmodule HmntTest do
       field(:count, :integer, default: 0)
     end
 
+    defmodule ListIdentityProjection do
+      @moduledoc "Projection fixture with list-based identity"
+      use Hmnt.Schema
+
+      schema "list_identity_projection" do
+        field(:tenant_id, :integer)
+        field(:entity_id, :integer)
+        field(:count, :integer, default: 0)
+      end
+
+      @impl true
+      def identity(%{tenant_id: tenant_id, entity_id: entity_id, index: idx}),
+        do: {[tenant_id, entity_id], idx}
+
+      @impl true
+      def source(_, _, _), do: []
+
+      @impl true
+      def handle_event(_, state), do: Ecto.Changeset.change(state)
+    end
+
     @impl true
     def identity(%{entity_id: id, index: idx}), do: {id, idx}
 
@@ -217,6 +238,15 @@ defmodule HmntTest do
     test "identity/2 delegates to projection module" do
       assert {1, 5} = Hmnt.Projection.identity(CounterProjection, %{entity_id: 1, index: 5})
       assert nil == Hmnt.Projection.identity(CounterProjection, %{})
+    end
+
+    test "identity/2 supports list(term) entity ids" do
+      assert {[10, 20], 7} =
+               Hmnt.Projection.identity(HmntTest.CounterProjection.ListIdentityProjection, %{
+                 tenant_id: 10,
+                 entity_id: 20,
+                 index: 7
+               })
     end
 
     test "handle_event/3 delegates to projection module" do

@@ -42,6 +42,9 @@ defmodule Hmnt.Schema do
           Ecto.Changeset.cast(state, data, [:name, :email])
         end
       end
+
+  `identity/1` may return a scalar entity id (`{id, idx}`) or list-based
+  composite id (`{[tenant_id, id], idx}`).
   """
 
   defmacro __using__(_opts) do

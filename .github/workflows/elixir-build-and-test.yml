@@ -1,15 +1,24 @@
 name: Build and Test
-
 on:
   push:
     branches:
       - main
   pull_request:
-
 jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hmnt_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lotoz_test" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       MIX_ENV: test
     strategy:
@@ -17,17 +26,14 @@ jobs:
       matrix:
         elixir: ["1.19.0"]
         otp: ["28.0"]
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Elixir Project
         uses: ./.github/actions/elixir-setup
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
           build-flags: --all-warnings --warnings-as-errors
-
       - name: Run tests
         run: mix test --warnings-as-errors
